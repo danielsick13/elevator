@@ -248,7 +248,41 @@ function ding() {
     g.gain.setValueAtTime(0, t + d); g.gain.linearRampToValueAtTime(0.25, t + d + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + d + 1.4);
     o.connect(g); g.connect(ctx.destination); o.start(t + d); o.stop(t + d + 1.5); }
 }
-function stop() { player.pause(); node = null; $("shaft").classList.remove("open"); $("stop").disabled = true; }
+let wa = null, mode = "";
+function stopWA() { if (wa) { try { wa.stop(); } catch (e) {} wa = null; } }
+function stop() { player.pause(); stopWA(); node = null; $("shaft").classList.remove("open"); $("stop").disabled = true; }
+// диагностика: открыть с ?debug=1
+const DEBUG = /debug/.test(location.search);
+function dbg(m) { if (!DEBUG) return; let el = $("dbg"); if (!el) { el = document.createElement("pre"); el.id = "dbg";
+  el.style.cssText = "white-space:pre-wrap;font:11px/1.4 ui-monospace,Menlo,monospace;color:#9fb;margin-top:14px;opacity:.9"; document.querySelector(".wrap").appendChild(el); }
+  el.textContent += (performance.now() / 1000).toFixed(1) + "s " + m + "\n"; }
+dbg("UA " + navigator.userAgent); dbg("Telegram " + !!window.Telegram + " initData " + !!(window.Telegram?.WebApp?.initData) + " audioSession " + (navigator.audioSession ? navigator.audioSession.type : "нет"));
+function unlockWA() { try { const b = ctx.createBuffer(1, 1, SR), src = ctx.createBufferSource(); src.buffer = b; src.connect(ctx.destination); src.start(0); } catch (e) { dbg("unlockWA " + e); } }
+function startWA() {                              // запасной путь: Web Audio
+  stopWA(); const b = ctx.createBuffer(2, current.N, SR); b.copyToChannel(current.l, 0); b.copyToChannel(current.r, 1);
+  wa = ctx.createBufferSource(); wa.buffer = b; wa.loop = true; wa.connect(ctx.destination); wa.start(); mode = "webaudio"; dbg("webaudio start, ctx " + ctx.state);
+  return ctx.state === "running";
+}
+function tryAudio() {                             // основной путь: <audio>; true, если реально заиграло
+  return new Promise(resolve => { let done = false; const fin = v => { if (!done) { done = true; resolve(v); } };
+    player.addEventListener("playing", () => { dbg("audio playing"); fin(true); }, { once: true });
+    player.play().catch(e => { dbg("audio play rejected: " + e.name); fin(false); });
+    setTimeout(() => fin(!player.paused && player.currentTime > 0), 2000); });
+}
+async function startPlayback() {
+  player.src = playerUrl; player.currentTime = 0;
+  if (await tryAudio()) { mode = "audio"; return true; }
+  player.pause();
+  try { await ctx.resume(); } catch (e) {}
+  return startWA();
+}
+function needTap() {                              // ничего не вышло без нажатия — просим ▶, в нажатии Телеграм разрешит
+  $("hint").textContent = "Нажмите ▶, чтобы включить звук"; $("stop").textContent = "▶ играть";
+  $("stop").onclick = async () => { $("stop").textContent = "■ стоп"; $("stop").onclick = stopClick;
+    ctx.resume().catch(() => {}); player.currentTime = 0;
+    const ok = await player.play().then(() => true, () => false); dbg("tap audio " + ok);
+    if (!ok) startWA(); $("hint").textContent = "Играет по кругу."; };
+}
 function drawWave(l) {
   const c = $("wave"), g = c.getContext("2d"), W = c.width, H = c.height, step = Math.floor(l.length / W);
   g.clearRect(0, 0, W, H); g.fillStyle = "#dcb862";
@@ -257,7 +291,7 @@ function drawWave(l) {
 async function go(i) {
   if (busy) return; busy = true;
   unlock();
-  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); ctx.resume().catch(() => {});
+  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); ctx.resume().catch(() => {}); unlockWA();
   document.querySelectorAll(".btn").forEach((b, k) => b.classList.toggle("lit", k === i));
   stop(); $("hint").textContent = "Лифт едет… пара секунд";
   $("needle").style.transform = `rotate(${angleFor(i)}deg)`;
@@ -270,14 +304,11 @@ async function go(i) {
   ding();
   if (playerUrl) URL.revokeObjectURL(playerUrl);
   playerUrl = URL.createObjectURL(wavBlob(res.l, res.r));
-  setTimeout(() => {
-    player.src = playerUrl; player.currentTime = 0; node = player;
-    player.play().then(() => {
-      $("hint").textContent = "Играет по кругу. Нажмите этаж ещё раз — будет новый трек.";
-    }).catch(() => {
-      $("hint").innerHTML = "Нажмите ▶, чтобы включить звук"; $("stop").textContent = "▶ играть"; $("stop").onclick = () => { player.play(); $("stop").textContent = "■ стоп"; $("stop").onclick = stopClick; $("hint").textContent = "Играет по кругу."; };
-    });
-    $("shaft").classList.add("open"); $("stop").disabled = false; $("dl").disabled = false; busy = false; }, 650);
+  setTimeout(async () => {
+    node = player; $("shaft").classList.add("open"); $("stop").disabled = false; $("dl").disabled = false;
+    const ok = await startPlayback(); dbg("playback ok=" + ok + " mode=" + mode);
+    if (ok) $("hint").textContent = "Играет по кругу. Нажмите этаж ещё раз — будет новый трек."; else needTap();
+    busy = false; }, 650);
   if (window.Telegram?.WebApp?.HapticFeedback) Telegram.WebApp.HapticFeedback.impactOccurred("light");
 }
 FLOORS.forEach(([t, , ru], i) => { const b = document.createElement("button"); b.className = "btn"; b.innerHTML = `<b>${t}</b>${ru}`; b.onclick = () => go(i); $("panel").appendChild(b); });
