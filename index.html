@@ -233,13 +233,22 @@ FLOORS.forEach(([t], i) => { const a = Math.PI + (i + 0.5) * Math.PI / 6;
 const angleFor = i => -90 + (i + 0.5) * 30;
 $("needle").style.transform = `rotate(${angleFor(0)}deg)`;
 let ctx, node, current, busy = false;
+// iOS: Web Audio молчит при включённом бесшумном режиме → играем через <audio> и просим режим «воспроизведение»
+try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+const player = new Audio(); player.loop = true; player.setAttribute("playsinline", ""); player.preload = "auto";
+let playerUrl = null, unlocked = false;
+function unlock() {             // в момент нажатия «разблокируем» плеер тихим звуком — потом iOS разрешит play() после рендера
+  if (unlocked) return; unlocked = true;
+  player.src = URL.createObjectURL(wavBlob(new Float32Array(4410), new Float32Array(4410)));
+  player.play().catch(() => {});
+}
 function ding() {
   const t = ctx.currentTime;
   for (const [f, d] of [[1318.5, 0], [1046.5, 0.32]]) { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = f;
     g.gain.setValueAtTime(0, t + d); g.gain.linearRampToValueAtTime(0.25, t + d + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + d + 1.4);
     o.connect(g); g.connect(ctx.destination); o.start(t + d); o.stop(t + d + 1.5); }
 }
-function stop() { if (node) { try { node.stop(); } catch (e) {} node = null; } $("shaft").classList.remove("open"); $("stop").disabled = true; }
+function stop() { player.pause(); node = null; $("shaft").classList.remove("open"); $("stop").disabled = true; }
 function drawWave(l) {
   const c = $("wave"), g = c.getContext("2d"), W = c.width, H = c.height, step = Math.floor(l.length / W);
   g.clearRect(0, 0, W, H); g.fillStyle = "#dcb862";
@@ -247,25 +256,33 @@ function drawWave(l) {
 }
 async function go(i) {
   if (busy) return; busy = true;
-  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); await ctx.resume();
+  unlock();
+  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); ctx.resume().catch(() => {});
   document.querySelectorAll(".btn").forEach((b, k) => b.classList.toggle("lit", k === i));
-  stop(); $("hint").textContent = "Лифт едет…";
+  stop(); $("hint").textContent = "Лифт едет… пара секунд";
   $("needle").style.transform = `rotate(${angleFor(i)}deg)`;
   const style = FLOORS[i][1] || Object.keys(STYLES)[Math.floor(Math.random() * 5)];
   const seed = Math.floor(Math.random() * 1e6);
   const [res] = await Promise.all([render(style, 45, seed), new Promise(r => setTimeout(r, 1400))]);
   current = { ...res, seed };
-  const b = ctx.createBuffer(2, res.N, SR); b.copyToChannel(res.l, 0); b.copyToChannel(res.r, 1);
   $("fl").textContent = FLOORS[i][0] === "L" ? "L" : FLOORS[i][0]; $("nm").textContent = res.info.ru;
   $("meta").textContent = `${res.info.key} · ${res.info.bpm} BPM · ${res.info.prog}`; drawWave(res.l);
   ding();
-  setTimeout(() => { node = ctx.createBufferSource(); node.buffer = b; node.loop = true; node.connect(ctx.destination); node.start();
-    $("shaft").classList.add("open"); $("stop").disabled = false; $("dl").disabled = false;
-    $("hint").textContent = "Играет по кругу. Нажмите этаж ещё раз — будет новый трек."; busy = false; }, 650);
+  if (playerUrl) URL.revokeObjectURL(playerUrl);
+  playerUrl = URL.createObjectURL(wavBlob(res.l, res.r));
+  setTimeout(() => {
+    player.src = playerUrl; player.currentTime = 0; node = player;
+    player.play().then(() => {
+      $("hint").textContent = "Играет по кругу. Нажмите этаж ещё раз — будет новый трек.";
+    }).catch(() => {
+      $("hint").innerHTML = "Нажмите ▶, чтобы включить звук"; $("stop").textContent = "▶ играть"; $("stop").onclick = () => { player.play(); $("stop").textContent = "■ стоп"; $("stop").onclick = stopClick; $("hint").textContent = "Играет по кругу."; };
+    });
+    $("shaft").classList.add("open"); $("stop").disabled = false; $("dl").disabled = false; busy = false; }, 650);
   if (window.Telegram?.WebApp?.HapticFeedback) Telegram.WebApp.HapticFeedback.impactOccurred("light");
 }
 FLOORS.forEach(([t, , ru], i) => { const b = document.createElement("button"); b.className = "btn"; b.innerHTML = `<b>${t}</b>${ru}`; b.onclick = () => go(i); $("panel").appendChild(b); });
-$("stop").onclick = () => { stop(); $("hint").textContent = "Двери закрыты. Выберите этаж."; };
+const stopClick = () => { stop(); $("hint").textContent = "Двери закрыты. Выберите этаж."; };
+$("stop").onclick = stopClick;
 $("dl").onclick = () => {
   if (!current) return;
   const tg = window.Telegram?.WebApp;
