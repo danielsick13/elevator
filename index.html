@@ -42,6 +42,27 @@ canvas{width:100%;height:46px}
 .hint{text-align:center;font-size:14px;margin-top:16px;opacity:.75;min-height:20px;position:relative}
 footer{text-align:center;margin-top:22px;font-size:13px;opacity:.85;position:relative;line-height:1.7}
 footer a{color:var(--green);text-decoration:none;font-family:ui-monospace,Menlo,monospace;letter-spacing:.05em}
+.row{flex-wrap:wrap}
+.board{text-align:center;font-size:13px;letter-spacing:.14em;color:var(--gold-l);height:20px;line-height:20px;margin:2px auto 0;max-width:300px;position:relative;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.board.warn{color:#ffb347}
+@keyframes flick{0%{filter:brightness(1)}6%{filter:brightness(.2)}10%{filter:brightness(1.1)}18%{filter:brightness(.12)}24%{filter:brightness(.9)}34%{filter:brightness(.3)}44%{filter:brightness(1)}60%{filter:brightness(.5)}70%{filter:brightness(.85)}100%{filter:brightness(.62) sepia(.35)}}
+@keyframes shake{0%,100%{transform:translate(0,0)}20%{transform:translate(-3px,4px)}40%{transform:translate(3px,-2px)}60%{transform:translate(-2px,2px)}80%{transform:translate(1px,-1px)}}
+.shaft.stuck .inside{animation:flick 1.8s linear 1 forwards}
+.wrap.stuck .rays{animation:flick 1.8s linear 1 forwards}
+.shaft.jolt{animation:shake .45s ease-out}
+.plate{position:absolute;inset:6px;z-index:5;display:flex;flex-direction:column;justify-content:center;gap:9px;padding:14px 12px;text-align:center;overflow:auto;
+  background:linear-gradient(180deg,#15110a,#090705);border:1px solid var(--gold);outline:1px solid rgba(220,184,98,.45);outline-offset:-6px;box-shadow:0 0 30px rgba(0,0,0,.85);
+  opacity:0;transform:scale(.96);visibility:hidden;transition:opacity .35s,transform .35s,visibility 0s .35s;pointer-events:none}
+.plate.show{opacity:1;transform:none;visibility:visible;transition-delay:0s;pointer-events:auto}
+#pText p+p{margin-top:5px}
+.plate h2{font-family:"Playfair Display",serif;font-weight:700;font-size:18px;line-height:1.2;color:var(--gold-l)}
+.plate h2::after{content:"";display:block;width:56px;height:1px;margin:8px auto 0;background:linear-gradient(90deg,transparent,var(--gold),transparent)}
+.plate p{font-size:14px;line-height:1.32}
+.plate p.small{font-size:12.5px;opacity:.75}
+.pbtn{display:block;width:100%;padding:9px 6px;font-family:inherit;font-size:14.5px;letter-spacing:.04em;cursor:pointer;border:1px solid var(--gold)}
+.pbtn.main{background:linear-gradient(180deg,var(--gold-l),var(--gold) 50%,var(--gold-d));color:#1d1406;font-weight:700;border:0}
+.pbtn.sec{background:rgba(220,184,98,.08);color:var(--gold-l)}
+.plink{background:none;border:0;color:var(--ink);opacity:.75;text-decoration:underline;text-underline-offset:3px;font-family:inherit;font-size:13px;cursor:pointer;padding:2px}
 </style>
 </head>
 <body>
@@ -56,17 +77,24 @@ footer a{color:var(--green);text-decoration:none;font-family:ui-monospace,Menlo,
     <g class="needle" id="needle"><line x1="110" y1="112" x2="110" y2="52" stroke="#f6e6a8" stroke-width="4" stroke-linecap="round"/></g>
     <circle cx="110" cy="112" r="9" fill="url(#g)"/>
   </svg>
+  <div class="board" id="board"></div>
   <div class="shaft" id="shaft">
     <div class="inside">
       <div class="fl gold" id="fl">L</div><div class="nm" id="nm">Лобби</div><div class="meta" id="meta">выберите этаж</div>
       <canvas id="wave" width="440" height="80"></canvas>
     </div>
     <div class="door l"></div><div class="door r"></div>
+    <div class="plate" id="plate" role="dialog" aria-live="polite">
+      <h2 id="pTitle"></h2><div id="pText"></div>
+      <button class="pbtn main" id="pMain"></button>
+      <button class="pbtn sec" id="pShare"></button>
+      <button class="plink" id="pGo"></button>
+    </div>
   </div>
   <div class="panel" id="panel"></div>
-  <div class="row"><button class="act" id="stop" disabled>■ стоп</button><button class="act" id="dl" disabled>⬇ скачать WAV</button></div>
+  <div class="row"><button class="act" id="stop" disabled>■ стоп</button><button class="act" id="dl" disabled>⬇ скачать WAV</button><button class="act" id="share" disabled>↗ поделиться</button></div>
   <div class="hint" id="hint">Нажмите этаж. Каждый раз — новый трек.</div>
-  <footer>Каждый звук — формула: FM-родес, контрабас, виброфон.<br><a href="https://ctrlxplay.ru" target="_blank" rel="noopener">CTRL+PLAY</a></footer>
+  <footer><span id="foot">Каждый звук — формула: FM-родес, контрабас, виброфон.</span><br><a href="https://ctrlxplay.ru" target="_blank" rel="noopener">CTRL+PLAY</a></footer>
 </div>
 <script>
 // ───────────── звуковой движок (порт elevator.py) ─────────────
@@ -224,15 +252,61 @@ function wavBlob(l, r) {
   return new Blob([buf], { type: "audio/wav" });
 }
 
+// ───────────── настройки ─────────────
+const SITE_URL = "https://ctrlxplay.ru/";                // куда ведёт русская табличка (с меткой utm_source=lift)
+const IG_URL = "https://www.instagram.com/danielsick13/";
+const qs = new URLSearchParams(location.search);
+const STUCK_AFTER = +qs.get("stucktest") || 45;           // ?stucktest=5 — застрять через 5 с (для проверки)
+const tgApp = () => { const tg = window.Telegram?.WebApp; return tg && tg.initData ? tg : null; };   // режим Mini App
+
+// ───────────── язык ─────────────
+const LANG = (() => {
+  const q = qs.get("lang"); if (q) return q.toLowerCase().startsWith("ru") ? "ru" : "en";
+  const l = (window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code || navigator.language || "ru").toLowerCase();
+  return l.startsWith("ru") ? "ru" : "en";
+})();
+const I18N = {
+  ru: { floors: ["случайно", "босса", "холл", "молл 80-х", "свинг", "спа"],
+        styles: { bossa: "Босса-нова", lobby: "Холл отеля", mall80s: "Молл 80-х", swing: "Свинг", spa: "Спа" },
+        lobby: "Лобби", pick: "выберите этаж", stop: "■ стоп", play: "▶ играть", dl: "⬇ скачать WAV", share: "↗ поделиться",
+        hintIdle: "Нажмите этаж. Каждый раз — новый трек.", riding: "Лифт едет… пара секунд",
+        playing: "Играет по кругу. Нажмите этаж ещё раз — будет новый трек.", playingShort: "Играет по кругу.",
+        tapToPlay: "Нажмите ▶, чтобы включить звук", closed: "Двери закрыты. Выберите этаж.",
+        tgNoDl: "В Телеграме файл не скачать — откройте в браузере.", footer: "Каждый звук — формула: FM-родес, контрабас, виброфон.",
+        floor: "этаж", sent: n => `Вам прислали этаж ${n}`, sentHint: "Нажмите «играть» — заиграет тот же трек.",
+        between: "⚠ между этажами", copied: "ссылка скопирована ✓", shareText: "Застрял в лифте с этой музыкой 🛗",
+        pTitle: "Лифт застрял.", pText: ["Мастер уже едет.", "Пока ждём: хотите делать такую музыку сами, руками?"], pSmall: "",
+        pMain: "→ CTRL+PLAY", pShare: "Поделиться этим треком", pGo: "ехать дальше" },
+  en: { floors: ["random", "bossa", "lobby", "'80s mall", "swing", "spa"],
+        styles: { bossa: "Bossa nova", lobby: "Hotel lobby", mall80s: "'80s mall", swing: "Swing", spa: "Spa" },
+        lobby: "Lobby", pick: "pick a floor", stop: "■ stop", play: "▶ play", dl: "⬇ download WAV", share: "↗ share",
+        hintIdle: "Press a floor. Every time — a new track.", riding: "Going up… a couple of seconds",
+        playing: "Looping. Press a floor again for a new track.", playingShort: "Looping.",
+        tapToPlay: "Tap ▶ to turn the sound on", closed: "Doors closed. Pick a floor.",
+        tgNoDl: "Telegram can't save files — opening in the browser.", footer: "Every sound is a formula: FM Rhodes, upright bass, vibraphone.",
+        floor: "floor", sent: n => `You've been sent the ${n} floor`, sentHint: "Press play to hear the exact same track.",
+        between: "⚠ between floors", copied: "link copied ✓", shareText: "Stuck in an elevator with this music 🛗",
+        pTitle: "The elevator is stuck.", pText: ["The technician is on his way.", "Meanwhile: every sound here is a formula, no samples, no AI model."],
+        pSmall: "Made by Daniel Izmaylov, musician.",
+        pMain: "→ Instagram", pShare: "Share this track", pGo: "keep riding" },
+};
+const T = I18N[LANG];
+function mainUrl() {
+  if (LANG !== "ru") return IG_URL;                       // Instagram — без метки
+  const u = new URL(SITE_URL); u.searchParams.set("utm_source", "lift"); return u.toString();
+}
+const styleName = st => T.styles[st] || st;
+
 // ───────────── интерфейс ─────────────
-const FLOORS = [["L", null, "случайно"], ["1", "bossa", "босса"], ["2", "lobby", "холл"], ["3", "mall80s", "молл 80-х"], ["4", "swing", "свинг"], ["5", "spa", "спа"]];
+const FLOORS = [["L", null], ["1", "bossa"], ["2", "lobby"], ["3", "mall80s"], ["4", "swing"], ["5", "spa"]];
 const $ = id => document.getElementById(id);
 const ticks = $("ticks");
 FLOORS.forEach(([t], i) => { const a = Math.PI + (i + 0.5) * Math.PI / 6;
   ticks.insertAdjacentHTML("beforeend", `<text x="${110 + 74 * Math.cos(a)}" y="${112 + 74 * Math.sin(a) + 6}">${t}</text>`); });
-const angleFor = i => -90 + (i + 0.5) * 30;
+const angleFor = i => -90 + (Math.max(0, Math.min(5, i)) + 0.5) * 30;
 $("needle").style.transform = `rotate(${angleFor(0)}deg)`;
-let ctx, node, current, busy = false;
+const board = (txt, warn = false) => { $("board").textContent = txt; $("board").classList.toggle("warn", warn); };
+let ctx, node, current, busy = false, curFloor = 0;
 // iOS: Web Audio молчит при включённом бесшумном режиме → играем через <audio> и просим режим «воспроизведение»
 try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
 const player = new Audio(); player.loop = true; player.setAttribute("playsinline", ""); player.preload = "auto";
@@ -243,20 +317,30 @@ function unlock() {             // в момент нажатия «разбло
   player.play().catch(() => {});
 }
 function ding() {
-  const t = ctx.currentTime;
+  if (!ctx) return; const t = ctx.currentTime;
   for (const [f, d] of [[1318.5, 0], [1046.5, 0.32]]) { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = f;
     g.gain.setValueAtTime(0, t + d); g.gain.linearRampToValueAtTime(0.25, t + d + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + d + 1.4);
     o.connect(g); g.connect(ctx.destination); o.start(t + d); o.stop(t + d + 1.5); }
 }
+function boom() {               // глухой удар: падающий синус + приглушённый шум
+  if (!ctx) return; const t = ctx.currentTime;
+  const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.setValueAtTime(95, t); o.frequency.exponentialRampToValueAtTime(32, t + 0.35);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.8, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+  o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.65);
+  const n = ctx.createBuffer(1, Math.floor(0.3 * ctx.sampleRate), ctx.sampleRate), d = n.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / ctx.sampleRate * 14);
+  const ns = ctx.createBufferSource(), lp = ctx.createBiquadFilter(), ng = ctx.createGain(); ns.buffer = n; lp.type = "lowpass"; lp.frequency.value = 260; ng.gain.value = 0.9;
+  ns.connect(lp); lp.connect(ng); ng.connect(ctx.destination); ns.start(t);
+}
 let wa = null, mode = "";
 function stopWA() { if (wa) { try { wa.stop(); } catch (e) {} wa = null; } }
-function stop() { player.pause(); stopWA(); node = null; $("shaft").classList.remove("open"); $("stop").disabled = true; }
+function stop() { player.pause(); stopWA(); node = null; mode = ""; $("shaft").classList.remove("open"); $("stop").disabled = true; }
 // диагностика: открыть с ?debug=1
 const DEBUG = /debug/.test(location.search);
 function dbg(m) { if (!DEBUG) return; let el = $("dbg"); if (!el) { el = document.createElement("pre"); el.id = "dbg";
   el.style.cssText = "white-space:pre-wrap;font:11px/1.4 ui-monospace,Menlo,monospace;color:#9fb;margin-top:14px;opacity:.9"; document.querySelector(".wrap").appendChild(el); }
   el.textContent += (performance.now() / 1000).toFixed(1) + "s " + m + "\n"; }
-dbg("UA " + navigator.userAgent); dbg("Telegram " + !!window.Telegram + " initData " + !!(window.Telegram?.WebApp?.initData) + " audioSession " + (navigator.audioSession ? navigator.audioSession.type : "нет"));
+dbg("UA " + navigator.userAgent); dbg("Telegram " + !!window.Telegram + " initData " + !!tgApp() + " lang " + LANG + " audioSession " + (navigator.audioSession ? navigator.audioSession.type : "нет"));
 function unlockWA() { try { const b = ctx.createBuffer(1, 1, SR), src = ctx.createBufferSource(); src.buffer = b; src.connect(ctx.destination); src.start(0); } catch (e) { dbg("unlockWA " + e); } }
 function startWA() {                              // запасной путь: Web Audio
   stopWA(); const b = ctx.createBuffer(2, current.N, SR); b.copyToChannel(current.l, 0); b.copyToChannel(current.r, 1);
@@ -277,50 +361,140 @@ async function startPlayback() {
   return startWA();
 }
 function needTap() {                              // ничего не вышло без нажатия — просим ▶, в нажатии Телеграм разрешит
-  $("hint").textContent = "Нажмите ▶, чтобы включить звук"; $("stop").textContent = "▶ играть";
-  $("stop").onclick = async () => { $("stop").textContent = "■ стоп"; $("stop").onclick = stopClick;
+  $("hint").textContent = T.tapToPlay; $("stop").textContent = T.play;
+  $("stop").onclick = async () => { $("stop").textContent = T.stop; $("stop").onclick = stopClick;
     ctx.resume().catch(() => {}); player.currentTime = 0;
     const ok = await player.play().then(() => true, () => false); dbg("tap audio " + ok);
-    if (!ok) startWA(); $("hint").textContent = "Играет по кругу."; };
+    if (ok) mode = "audio"; else startWA(); playStartedAt = performance.now(); $("hint").textContent = T.playingShort; };
 }
 function drawWave(l) {
   const c = $("wave"), g = c.getContext("2d"), W = c.width, H = c.height, step = Math.floor(l.length / W);
   g.clearRect(0, 0, W, H); g.fillStyle = "#dcb862";
   for (let x = 0; x < W; x++) { let m = 0; for (let i = x * step; i < (x + 1) * step; i += 64) m = Math.max(m, Math.abs(l[i])); const h = m * H * 0.9; g.fillRect(x, (H - h) / 2, 1, h); }
 }
-async function go(i) {
+const playingBoard = () => board(`${T.floor} ${FLOORS[curFloor][0]} · ${styleName(current.info.style)}`);
+
+// ───────────── этажи ─────────────
+let presses = 0, playStartedAt = 0;
+async function go(i, forced) {                  // forced = {style, seed} — трек по присланной ссылке
   if (busy) return; busy = true;
+  if (!forced) presses++;
+  if (plateOpen) closePlate(false);
   unlock();
   ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); ctx.resume().catch(() => {}); unlockWA();
   document.querySelectorAll(".btn").forEach((b, k) => b.classList.toggle("lit", k === i));
-  stop(); $("hint").textContent = "Лифт едет… пара секунд";
+  stop(); $("hint").textContent = T.riding; curFloor = i;
+  $("stop").textContent = T.stop; $("stop").onclick = stopClick;
   $("needle").style.transform = `rotate(${angleFor(i)}deg)`;
-  const style = FLOORS[i][1] || Object.keys(STYLES)[Math.floor(Math.random() * 5)];
-  const seed = Math.floor(Math.random() * 1e6);
+  const style = forced ? forced.style : (FLOORS[i][1] || Object.keys(STYLES)[Math.floor(Math.random() * 5)]);
+  const seed = forced ? forced.seed : Math.floor(Math.random() * 1e6);
   const [res] = await Promise.all([render(style, 45, seed), new Promise(r => setTimeout(r, 1400))]);
   current = { ...res, seed };
-  $("fl").textContent = FLOORS[i][0] === "L" ? "L" : FLOORS[i][0]; $("nm").textContent = res.info.ru;
+  $("fl").textContent = FLOORS[i][0]; $("nm").textContent = styleName(res.info.style);
   $("meta").textContent = `${res.info.key} · ${res.info.bpm} BPM · ${res.info.prog}`; drawWave(res.l);
+  playingBoard();
   ding();
   if (playerUrl) URL.revokeObjectURL(playerUrl);
   playerUrl = URL.createObjectURL(wavBlob(res.l, res.r));
   setTimeout(async () => {
-    node = player; $("shaft").classList.add("open"); $("stop").disabled = false; $("dl").disabled = false;
-    const ok = await startPlayback(); dbg("playback ok=" + ok + " mode=" + mode);
-    if (ok) $("hint").textContent = "Играет по кругу. Нажмите этаж ещё раз — будет новый трек."; else needTap();
+    node = player; $("shaft").classList.add("open"); $("stop").disabled = false; $("dl").disabled = false; $("share").disabled = false;
+    const ok = await startPlayback(); dbg("playback ok=" + ok + " mode=" + mode + " style=" + style + " seed=" + seed);
+    playStartedAt = performance.now();
+    if (ok) $("hint").textContent = T.playing; else needTap();
     busy = false; }, 650);
-  if (window.Telegram?.WebApp?.HapticFeedback) Telegram.WebApp.HapticFeedback.impactOccurred("light");
+  tgApp()?.HapticFeedback?.impactOccurred("light");
 }
-FLOORS.forEach(([t, , ru], i) => { const b = document.createElement("button"); b.className = "btn"; b.innerHTML = `<b>${t}</b>${ru}`; b.onclick = () => go(i); $("panel").appendChild(b); });
-const stopClick = () => { stop(); $("hint").textContent = "Двери закрыты. Выберите этаж."; };
+FLOORS.forEach(([t], i) => { const b = document.createElement("button"); b.className = "btn"; b.innerHTML = `<b>${t}</b>${T.floors[i]}`; b.onclick = () => go(i); $("panel").appendChild(b); });
+const stopClick = () => { if (plateOpen) closePlate(false); stop(); $("hint").textContent = T.closed; board(T.pick); };
 $("stop").onclick = stopClick;
 $("dl").onclick = () => {
   if (!current) return;
-  const tg = window.Telegram?.WebApp;
-  if (tg && tg.initData) { $("hint").textContent = "В Телеграме файл не скачать — откройте в браузере."; tg.openLink(location.href); return; }
+  const tg = tgApp();
+  if (tg) { $("hint").textContent = T.tgNoDl; tg.openLink(location.href); return; }
   const a = document.createElement("a"); a.href = URL.createObjectURL(wavBlob(current.l, current.r));
   a.download = `elevator_${current.info.style}_${current.info.key}_${current.info.bpm}bpm_${current.seed}.wav`; a.click();
 };
+
+// ───────────── поделиться ─────────────
+const shareUrl = () => `${location.origin}${location.pathname}?f=${current.info.style}&s=${current.seed}`;
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch (e) {}
+  const ta = document.createElement("textarea"); ta.value = t; ta.style.cssText = "position:fixed;opacity:0;top:0"; document.body.appendChild(ta); ta.select();
+  let ok = false; try { ok = document.execCommand("copy"); } catch (e) {} ta.remove(); return ok;
+}
+function flash(btn, txt) { const old = btn.textContent; btn.textContent = txt; setTimeout(() => { btn.textContent = old; }, 2000); }
+async function share(btn) {
+  if (!current) return;
+  const url = shareUrl(), text = T.shareText, tg = tgApp();
+  if (tg) { tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`); return; }
+  if (navigator.share) {
+    try { await navigator.share({ text, url }); return; } catch (e) { if (e.name === "AbortError") return; }
+  }
+  if (await copyText(`${text} ${url}`)) { flash(btn, T.copied); $("hint").textContent = T.copied; }
+}
+$("share").onclick = () => share($("share"));
+
+// ───────────── лифт застрял ─────────────
+let stuckDone = false, plateOpen = false, listened = 0, lastTick = performance.now();
+try { stuckDone = !qs.get("stucktest") && sessionStorage.getItem("lift_stuck") === "1"; } catch (e) {}
+const isPlaying = () => (mode === "audio" && !player.paused) || (mode === "webaudio" && !!wa && ctx?.state === "running");
+function openLink(url) {
+  const tg = tgApp();
+  if (tg) { if (/^https:\/\/t\.me\//.test(url)) tg.openTelegramLink(url); else tg.openLink(url); return; }
+  if (!window.open(url, "_blank", "noopener")) location.href = url;
+}
+function fillPlate() {
+  $("pTitle").textContent = T.pTitle;
+  $("pText").innerHTML = T.pText.map(x => `<p>${x}</p>`).join("") + (T.pSmall ? `<p class="small">${T.pSmall}</p>` : "");
+  $("pMain").textContent = T.pMain; $("pShare").textContent = T.pShare; $("pGo").textContent = T.pGo;
+}
+function stuck() {
+  stuckDone = true; try { if (!qs.get("stucktest")) sessionStorage.setItem("lift_stuck", "1"); } catch (e) {}
+  const sh = $("shaft"), nd = $("needle"), base = curFloor, up = base < 5 ? 1 : -1;
+  sh.classList.add("stuck", "jolt"); document.querySelector(".wrap").classList.add("stuck");
+  const r = sh.getBoundingClientRect(); if (r.top < 0 || r.bottom > innerHeight) sh.scrollIntoView({ behavior: "smooth", block: "center" });   // кабина в кадре
+  setTimeout(() => sh.classList.remove("jolt"), 500);
+  boom(); tgApp()?.HapticFeedback?.notificationOccurred("warning");
+  nd.style.transition = "transform .09s";               // табло дёргается между цифрами
+  const seq = [base + up, base, base + up, base, base + up * 0.6, base + up * 0.4];
+  seq.forEach((v, k) => setTimeout(() => {
+    nd.style.transform = `rotate(${angleFor(v)}deg)`;
+    const dig = FLOORS[Math.round(Math.max(0, Math.min(5, v)))][0]; board(`${dig} · ${dig} · ${dig}`, true);
+  }, k * 140));
+  setTimeout(() => { nd.style.transition = ""; board(T.between, true); }, seq.length * 140);
+  setTimeout(() => { fillPlate(); $("plate").classList.add("show"); plateOpen = true; dbg("stuck: listened=" + listened.toFixed(1) + " presses=" + presses); }, 950);
+}
+function closePlate(ride) {
+  plateOpen = false; $("plate").classList.remove("show");
+  $("shaft").classList.remove("stuck"); document.querySelector(".wrap").classList.remove("stuck");
+  if (ride) { ding(); $("needle").style.transform = `rotate(${angleFor(curFloor)}deg)`; if (current) playingBoard(); $("hint").textContent = T.playing; }
+}
+$("pGo").onclick = () => closePlate(true);
+$("pMain").onclick = () => openLink(mainUrl());
+$("pShare").onclick = () => share($("pShare"));
+setInterval(() => {
+  const now = performance.now(), on = isPlaying();
+  if (on) listened += (now - lastTick) / 1000; lastTick = now;
+  if (!stuckDone && on && !busy && (listened >= STUCK_AFTER || (presses >= 3 && now - playStartedAt > 2500))) stuck();
+}, 250);
+
+// ───────────── язык интерфейса + присланный трек ─────────────
+document.documentElement.lang = LANG;
+if (LANG !== "ru") document.querySelector('meta[name="description"]').content = "Elevator music at the push of a button.";
+$("stop").textContent = T.stop; $("dl").textContent = T.dl; $("share").textContent = T.share;
+$("hint").textContent = T.hintIdle; $("nm").textContent = T.lobby; $("meta").textContent = T.pick; $("foot").textContent = T.footer;
+board(T.pick);
+const shared = (() => { const f = qs.get("f"), sd = qs.get("s");
+  return f && Object.prototype.hasOwnProperty.call(STYLES, f) && /^\d{1,9}$/.test(sd || "") ? { style: f, seed: parseInt(sd, 10) } : null; })();
+if (shared) {
+  const idx = FLOORS.findIndex(x => x[1] === shared.style); curFloor = idx;
+  $("needle").style.transform = `rotate(${angleFor(idx)}deg)`;
+  document.querySelectorAll(".btn").forEach((b, k) => b.classList.toggle("lit", k === idx));
+  board(T.sent(styleName(shared.style)));
+  $("fl").textContent = FLOORS[idx][0]; $("nm").textContent = styleName(shared.style); $("meta").textContent = "";
+  $("hint").textContent = T.sentHint;
+  $("stop").disabled = false; $("stop").textContent = T.play; $("stop").onclick = () => go(idx, shared);
+}
 if (window.Telegram?.WebApp) { const tg = Telegram.WebApp; tg.ready(); tg.expand(); try { tg.setHeaderColor("#0b1612"); tg.setBackgroundColor("#0b1612"); } catch (e) {} }
 </script>
 </body>
