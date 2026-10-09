@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Poiret+One&display=swap" rel="stylesheet">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
+@font-face{font-family:"Fairfax";src:url("fairfax.woff2") format("woff2");font-display:swap}
 :root{--bg:#0b1612;--bg2:#163028;--gold:#dcb862;--gold-l:#f6e6a8;--gold-d:#8f6a2a;--ink:#e9dcb5;--green:#E0FE93;--purple:#6515F5}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{background:var(--bg);color:var(--ink);font-family:"Poiret One",Georgia,serif}
@@ -55,6 +56,11 @@ footer a{color:var(--green);text-decoration:none;font-family:ui-monospace,Menlo,
   opacity:0;transform:scale(.96);visibility:hidden;transition:opacity .35s,transform .35s,visibility 0s .35s;pointer-events:none}
 .plate.show{opacity:1;transform:none;visibility:visible;transition-delay:0s;pointer-events:auto}
 #pText p+p{margin-top:5px}
+.cta{display:flex;flex-direction:column;gap:9px}
+.cta.brand{background:var(--purple);padding:12px 10px 10px;margin:0 -2px}
+.cta.brand p{font-family:"Fairfax",ui-monospace,monospace;font-size:16px;line-height:1.25;color:var(--green);text-transform:lowercase}
+.cta.brand .pbtn.main{background:var(--green);color:var(--purple);font-family:"Fairfax",ui-monospace,monospace;font-size:17px;font-weight:400;letter-spacing:.02em;text-transform:lowercase}
+.cta:not(.brand) p{display:none}
 .plate h2{font-family:"Playfair Display",serif;font-weight:700;font-size:18px;line-height:1.2;color:var(--gold-l)}
 .plate h2::after{content:"";display:block;width:56px;height:1px;margin:8px auto 0;background:linear-gradient(90deg,transparent,var(--gold),transparent)}
 .plate p{font-size:14px;line-height:1.32}
@@ -86,7 +92,7 @@ footer a{color:var(--green);text-decoration:none;font-family:ui-monospace,Menlo,
     <div class="door l"></div><div class="door r"></div>
     <div class="plate" id="plate" role="dialog" aria-live="polite">
       <h2 id="pTitle"></h2><div id="pText"></div>
-      <button class="pbtn main" id="pMain"></button>
+      <div class="cta" id="pCta"><p id="pCtaText"></p><button class="pbtn main" id="pMain"></button></div>
       <button class="pbtn sec" id="pShare"></button>
       <button class="plink" id="pGo"></button>
     </div>
@@ -275,8 +281,8 @@ const I18N = {
         tgNoDl: "В Телеграме файл не скачать — откройте в браузере.", footer: "Каждый звук — формула: FM-родес, контрабас, виброфон.",
         floor: "этаж", sent: n => `Вам прислали этаж ${n}`, sentHint: "Нажмите «играть» — заиграет тот же трек.",
         between: "⚠ между этажами", copied: "ссылка скопирована ✓", shareText: "Застрял в лифте с этой музыкой 🛗",
-        pTitle: "Лифт застрял.", pText: ["Мастер уже едет.", "Пока ждём: хотите делать такую музыку сами, руками?"], pSmall: "",
-        pMain: "→ CTRL+PLAY", pShare: "Поделиться этим треком", pGo: "ехать дальше" },
+        pTitle: "Лифт застрял.", pText: ["Мастер уже едет."], pSmall: "",
+        cta: "напишите свой трек", pMain: "ctrl+play →", pShare: "Поделиться этим треком", pGo: "ехать дальше" },
   en: { floors: ["random", "bossa", "lobby", "'80s mall", "swing", "spa"],
         styles: { bossa: "Bossa nova", lobby: "Hotel lobby", mall80s: "'80s mall", swing: "Swing", spa: "Spa" },
         lobby: "Lobby", pick: "pick a floor", stop: "■ stop", play: "▶ play", dl: "⬇ download WAV", share: "↗ share",
@@ -447,6 +453,7 @@ function fillPlate() {
   $("pTitle").textContent = T.pTitle;
   $("pText").innerHTML = T.pText.map(x => `<p>${x}</p>`).join("") + (T.pSmall ? `<p class="small">${T.pSmall}</p>` : "");
   $("pMain").textContent = T.pMain; $("pShare").textContent = T.pShare; $("pGo").textContent = T.pGo;
+  $("pCtaText").innerHTML = T.cta || ""; $("pCta").classList.toggle("brand", !!T.cta);   // RU: фирменный блок CTRL+PLAY
 }
 function stuck() {
   stuckDone = true; try { if (!qs.get("stucktest")) sessionStorage.setItem("lift_stuck", "1"); } catch (e) {}
